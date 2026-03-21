@@ -1,0 +1,74 @@
+# Full-stack API: main.py + WebSocket /stream + MongoDB (env) + all ML in-process.
+# Requires Secret driver-safety-secrets (MONGODB_URL, MONGODB_DATABASE).
+# One replica recommended on a single 8GB node; scale the node pool before scaling replicas.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-service
+  labels:
+    app: api-service
+    tier: full
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: api-service
+  template:
+    metadata:
+      labels:
+        app: api-service
+    spec:
+      containers:
+        - name: api-service
+          image: bluebirddriversafetyacr.azurecr.io/api-service:full-2.5
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: driver-safety-secrets
+          resources:
+            # Keep requests low so Ingress + system pods fit on one node; limit still allows burst.
+            requests:
+              cpu: "300m"
+              memory: "5Gi"
+            limits:
+              cpu: "1800m"
+              memory: "6Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+  labels:
+    app: api-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: api-service
+  ports:
+    - port: 80
+      targetPort: 8000
+      name: http-ws
+      # WebSocket uses the same port (HTTP Upgrade); no extra Service needed.

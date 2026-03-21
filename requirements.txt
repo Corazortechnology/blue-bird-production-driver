@@ -1,0 +1,19 @@
+fastapi
+uvicorn
+websockets
+pydantic
+python-multipart
+python-dotenv
+pymongo
+# TensorFlow (used by retinaface) needs numpy 1.x on many setups
+numpy>=1.26,<2
+opencv-python
+pillow
+mediapipe
+onnxruntime
+scikit-learn
+scipy
+PyYAML
+torch
+torchvision
+# retinaface: installed in Dockerfile.full after tensorflow-cpu (PyPI pins old TF)

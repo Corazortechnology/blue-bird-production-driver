@@ -1,0 +1,54 @@
+# Full Driver Safety API: FastAPI + WebSocket + in-process ML (same as local `main.py`).
+# Build for AKS (linux/amd64): docker build --platform linux/amd64 -f Dockerfile.full -t api-service:full .
+
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+# OpenCV + Mediapipe runtime libs
+# MediaPipe FaceLandmarker needs libGLESv2.so.2 (see libgles2-mesa on Debian)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libegl1-mesa \
+    libgl1 \
+    libgles2-mesa \
+    libglib2.0-0 \
+    libgomp1 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /app/requirements.txt
+# retinaface on PyPI requires tensorflow==2.5 (no Py3.11 wheels). Install TF first, then retinaface without deps.
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r /app/requirements.txt && \
+    pip install --no-cache-dir "tensorflow-cpu==2.15.1" && \
+    pip install --no-cache-dir --no-deps "retinaface==1.1.1"
+
+COPY . /app
+
+# Required by FaceDetector — not shipped in git (large).
+RUN mkdir -p /app/models && \
+    curl -fsSL -o /app/models/face_landmarker.task \
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task" \
+    && test -s /app/models/face_landmarker.task
+
+# Repo may contain Git LFS pointer for arcface.onnx (invalid ONNX). Replace with InsightFace w600k_r50 (ArcFace, 112x112).
+RUN rm -f /app/models/arcface.onnx && \
+    curl -fsSL -o /tmp/buffalo_l.zip \
+    "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip" && \
+    unzip -q /tmp/buffalo_l.zip -d /tmp/buffalo_l && \
+    ONNX=$(find /tmp/buffalo_l -name "w600k_r50.onnx" | head -1) && \
+    test -n "$ONNX" && cp "$ONNX" /app/models/arcface.onnx && \
+    rm -rf /tmp/buffalo_l /tmp/buffalo_l.zip && \
+    test -s /app/models/arcface.onnx
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

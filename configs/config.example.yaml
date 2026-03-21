@@ -1,0 +1,6 @@
+# Copy to config.yaml for local use, or use environment variables:
+#   export MONGODB_URL="mongodb+srv://user:pass@cluster.mongodb.net/"
+#   export MONGODB_DATABASE="driver_monitoring"
+mongodb:
+  url: "mongodb://127.0.0.1:27017"
+  database: "driver_monitoring"

@@ -1,0 +1,4 @@
+# Default for local dev. In Kubernetes set MONGODB_URL + MONGODB_DATABASE (see k8s/README-FULL-STACK.md).
+mongodb:
+  url: "mongodb://127.0.0.1:27017"
+  database: "driver_monitoring"

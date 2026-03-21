@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Driver Safety — Live demo</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1419;
+      --card: #1a2332;
+      --accent: #3b82f6;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 0;
+      padding: 1rem;
+      background: var(--bg);
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+    h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
+    .warn {
+      background: #422006;
+      border: 1px solid #b45309;
+      color: #fdba74;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+    .row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-start; }
+    .panel {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 1rem;
+      max-width: 100%;
+    }
+    #outImg {
+      max-width: min(960px, 100%);
+      height: auto;
+      border-radius: 8px;
+      background: #000;
+    }
+    #metrics {
+      font-family: ui-monospace, monospace;
+      font-size: 0.75rem;
+      white-space: pre-wrap;
+      max-height: 280px;
+      overflow: auto;
+      color: var(--muted);
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 0.6rem 1.2rem;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status { font-size: 0.85rem; color: var(--muted); margin-top: 0.5rem; }
+    label { display: block; margin-bottom: 0.35rem; font-size: 0.85rem; }
+    input[type="text"] {
+      width: 100%;
+      max-width: 320px;
+      padding: 0.5rem;
+      border-radius: 6px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Driver Safety — browser demo</h1>
+  <p class="status">Uses the same WebSocket protocol as <code>data_pipeline/client.py</code> (JPEG in → JSON + JPEG out).</p>
+
+  <div class="warn" id="insecureBanner" style="display:none;">
+    <strong>You opened this page over plain HTTP on a public IP.</strong> Chrome/Safari/Firefox will <em>not</em> expose the camera API here
+    (<code>navigator.mediaDevices</code> is missing) — this is expected.
+    <br /><br />
+    <strong>Quick test (works today):</strong> on your Mac run:
+    <pre style="margin:0.5rem 0;overflow:auto;background:#0f172a;padding:0.5rem;border-radius:6px;">kubectl port-forward svc/api-service 8080:80</pre>
+    Then open <strong><a href="http://localhost:8080/demo" style="color:#93c5fd;">http://localhost:8080/demo</a></strong> (camera allowed on <code>localhost</code>).
+    <br /><br />
+    <strong>Share with others:</strong> put <strong>HTTPS</strong> in front (Azure App Gateway, Ingress + cert-manager, Cloudflare Tunnel, etc.) and use <code>https://your-domain/demo</code>.
+  </div>
+
+  <div class="warn" style="border-color:#334155;background:#1e293b;color:#cbd5e1;">
+    <strong>Camera rules:</strong> secure context only — <strong>HTTPS</strong> or <strong>http://localhost</strong>. Plain <code>http://20.x.x.x</code> will not get a camera.
+  </div>
+
+  <div class="panel" style="margin-bottom: 1rem;">
+    <label>Optional <code>driver_id</code> (query param on WebSocket)</label>
+    <input type="text" id="driverId" placeholder="e.g. driver-001" />
+    <div style="margin-top: 1rem;">
+      <button type="button" id="btnStart">Start camera &amp; stream</button>
+      <button type="button" id="btnStop" disabled>Stop</button>
+    </div>
+    <p id="statusLine" class="status">Idle</p>
+  </div>
+
+  <div class="row">
+    <div class="panel">
+      <div><strong>Server composite</strong></div>
+      <img id="outImg" alt="Waiting for stream…" />
+    </div>
+    <div class="panel">
+      <div><strong>Latest metrics (JSON)</strong></div>
+      <div id="metrics">—</div>
+    </div>
+  </div>
+
+  <video id="vid" playsinline muted style="display:none"></video>
+  <canvas id="cv" width="640" height="480" style="display:none"></canvas>
+
+  <script>
+    (function () {
+      const btnStart = document.getElementById("btnStart");
+      const btnStop = document.getElementById("btnStop");
+      const statusLine = document.getElementById("statusLine");
+      const outImg = document.getElementById("outImg");
+      const metricsEl = document.getElementById("metrics");
+      const driverId = document.getElementById("driverId");
+      const vid = document.getElementById("vid");
+      const cv = document.getElementById("cv");
+      const ctx = cv.getContext("2d");
+
+      let ws = null;
+      let running = false;
+      let inbox = [];
+      let resolveNext = null;
+
+      function setStatus(msg) {
+        statusLine.textContent = msg;
+      }
+
+      function recvOne() {
+        return new Promise(function (resolve) {
+          if (inbox.length) {
+            resolve(inbox.shift());
+            return;
+          }
+          resolveNext = resolve;
+        });
+      }
+
+      function wsUrl() {
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        const host = location.host;
+        let path = "/stream";
+        const q = driverId.value.trim();
+        if (q) path += "?driver_id=" + encodeURIComponent(q);
+        return proto + "//" + host + path;
+      }
+
+      async function loop() {
+        while (running && ws && ws.readyState === WebSocket.OPEN) {
+          ctx.drawImage(vid, 0, 0, 640, 480);
+          const blob = await new Promise(function (r) {
+            cv.toBlob(r, "image/jpeg", 0.75);
+          });
+          if (!blob || !running) break;
+          const buf = await blob.arrayBuffer();
+          ws.send(buf);
+
+          const m1 = await recvOne();
+          const m2 = await recvOne();
+
+          if (typeof m1 === "string") {
+            try {
+              const j = JSON.parse(m1);
+              metricsEl.textContent = JSON.stringify(j, null, 2);
+            } catch (e) {
+              metricsEl.textContent = m1;
+            }
+          }
+          if (m2 instanceof Blob) {
+            const url = URL.createObjectURL(m2);
+            outImg.onload = function () {
+              URL.revokeObjectURL(url);
+            };
+            outImg.src = url;
+          } else if (m2 instanceof ArrayBuffer) {
+            const url = URL.createObjectURL(new Blob([m2], { type: "image/jpeg" }));
+            outImg.onload = function () {
+              URL.revokeObjectURL(url);
+            };
+            outImg.src = url;
+          }
+        }
+      }
+
+      function showBannerIfInsecure() {
+        var h = location.hostname;
+        var local = h === "localhost" || h === "127.0.0.1" || h === "[::1]";
+        if (!local && !window.isSecureContext) {
+          document.getElementById("insecureBanner").style.display = "block";
+        }
+      }
+      showBannerIfInsecure();
+
+      btnStart.addEventListener("click", async function () {
+        if (running) return;
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+          setStatus(
+            "Camera API unavailable on this URL (need HTTPS or localhost). See the orange box above — use kubectl port-forward then http://localhost:8080/demo"
+          );
+          document.getElementById("insecureBanner").style.display = "block";
+          return;
+        }
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+            audio: false,
+          });
+          vid.srcObject = stream;
+          await vid.play();
+        } catch (e) {
+          setStatus("Camera error: " + e.message);
+          return;
+        }
+
+        const url = wsUrl();
+        setStatus("Connecting " + url + " …");
+        ws = new WebSocket(url);
+        ws.binaryType = "arraybuffer";
+
+        ws.onopen = function () {
+          running = true;
+          btnStart.disabled = true;
+          btnStop.disabled = false;
+          setStatus("Streaming…");
+          loop().catch(function (err) {
+            setStatus("Stream error: " + err.message);
+            stopAll();
+          });
+        };
+
+        ws.onmessage = function (ev) {
+          if (resolveNext) {
+            var r = resolveNext;
+            resolveNext = null;
+            r(ev.data);
+          } else {
+            inbox.push(ev.data);
+          }
+        };
+
+        ws.onerror = function () {
+          setStatus("WebSocket error");
+        };
+
+        ws.onclose = function () {
+          if (running) setStatus("WebSocket closed");
+          stopAll();
+        };
+      });
+
+      function stopAll() {
+        running = false;
+        btnStart.disabled = false;
+        btnStop.disabled = true;
+        if (ws) {
+          try {
+            ws.close();
+          } catch (e) {}
+          ws = null;
+        }
+        if (vid.srcObject) {
+          vid.srcObject.getTracks().forEach(function (t) {
+            t.stop();
+          });
+          vid.srcObject = null;
+        }
+        inbox = [];
+        resolveNext = null;
+        if (!statusLine.textContent.includes("error")) setStatus("Stopped");
+      }
+
+      btnStop.addEventListener("click", stopAll);
+    })();
+  </script>
+</body>
+</html>

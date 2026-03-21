@@ -1,0 +1,31 @@
+# TLS for api.corazor.com — requires ClusterIssuer and NGINX Ingress.
+# 1) Edit: replace api.corazor.com if you use another hostname.
+# 2) Use letsencrypt-staging first to test; switch to letsencrypt-prod for browser-trusted HTTPS.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-https
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Prod LE is trusted by browsers; HTTP-01 renewals still use port 80 (cert-manager solver).
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.corazor.com
+      secretName: api-corazor-tls
+  rules:
+    - host: api.corazor.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service
+                port:
+                  number: 80
