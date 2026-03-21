@@ -27,21 +27,30 @@ az ad sp create-for-rbac --name "github-actions-bluebird-aks" \
   --sdk-auth
 ```
 
-The command prints JSON. **Add it to GitHub** as repository secret:
+The command prints **one JSON object**. For **`azure/login@v2`** with a **service principal + password**, you must use **one** secret:
 
 | Secret name | Value |
 |-------------|--------|
-| `AZURE_CREDENTIALS` | The **full JSON** output from `create-for-rbac --sdk-auth` |
+| **`AZURE_CREDENTIALS`** | The **entire JSON** (one block), with **`clientId`**, **`clientSecret`**, **`subscriptionId`**, **`tenantId`** |
 
-Also ensure the SP can pull from ACR (Contributor on RG usually covers ACR in that RG). If the registry is in another RG, grant **AcrPush** on the registry resource to this SP.
+Official docs: [Login with a service principal secret](https://github.com/Azure/login#login-with-a-service-principal-secret).
+
+**Why not four separate secrets?** If the workflow passes `client-id`, `tenant-id`, and `subscription-id` together, **`azure/login` treats that as OIDC** (federated identity) and **ignores** `creds`. Then login fails with *"client-id and tenant-id are not supplied"* unless OIDC is fully configured. **Password-based SP login uses `creds` only** — do not pass those three inputs at the same time.
+
+If you already created four secrets, either:
+
+- Build one JSON by hand and add **`AZURE_CREDENTIALS`**, or  
+- Run `az ad sp create-for-rbac ... --sdk-auth` again and paste the full output into **`AZURE_CREDENTIALS`**.
+
+Also ensure the SP can use ACR (Contributor on RG usually covers ACR in that RG). If the registry is in another RG, grant **AcrPush** on the registry to this SP.
 
 ## 2) GitHub repository secrets
 
 1. Repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**  
 2. Name: **`AZURE_CREDENTIALS`**  
-3. Value: paste the JSON from step 1  
+3. Value: paste the **full JSON** from `create-for-rbac --sdk-auth` (valid JSON, no trailing commas).
 
-No other secrets are required for the default workflow.
+You may delete the four separate secrets (`AZURE_CLIENT_ID`, etc.) if you switch to **`AZURE_CREDENTIALS`** only — the workflow uses **`AZURE_CREDENTIALS`**.
 
 ## 3) OIDC (optional, no client secret)
 

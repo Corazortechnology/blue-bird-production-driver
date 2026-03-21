@@ -58,16 +58,16 @@ az ad sp create-for-rbac \
 
 ---
 
-## Part C — GitHub secret `AZURE_CREDENTIALS`
+## Part C — GitHub secret `AZURE_CREDENTIALS` (one JSON)
 
-1. Open your repo on GitHub: `https://github.com/YOUR_USERNAME/YOUR_REPO`
-2. **Settings** (repo) → **Secrets and variables** → **Actions**
-3. **New repository secret**
-4. **Name:** `AZURE_CREDENTIALS` (exactly this name)
-5. **Value:** paste the **full JSON** from Part B2
-6. **Add secret**
+The workflow uses **`azure/login`** with **`creds`** — **one** secret whose value is the **full JSON** from Part B2 (`create-for-rbac --sdk-auth`), including **`clientId`**, **`clientSecret`**, **`subscriptionId`**, **`tenantId`**.
 
-The workflow [`.github/workflows/deploy-aks.yml`](../.github/workflows/deploy-aks.yml) reads this secret.
+1. Repo → **Settings** → **Secrets and variables** → **Actions**
+2. **New repository secret** (or edit existing)
+3. Name: **`AZURE_CREDENTIALS`**
+4. Value: paste the **entire JSON** (single object)
+
+Do **not** rely on four separate secrets for this workflow; [azure/login](https://github.com/Azure/login#login-with-a-service-principal-secret) expects the JSON in **`creds`**. If you set `client-id` + `tenant-id` + `subscription-id` without OIDC, login breaks.
 
 ---
 
@@ -109,7 +109,7 @@ git push -u origin main
 2. Open **Build and deploy to AKS**
 3. The run triggered by your push should be **green** (or read the error log)
 
-If it fails on **Azure login**, check `AZURE_CREDENTIALS` JSON is complete.  
+If it fails on **Azure login**, check **`AZURE_CREDENTIALS`** is valid JSON with all four keys.  
 If it fails on **kubectl**, check the SP has rights to the AKS cluster in `rg-bluebird-driver-safety`.
 
 ---
@@ -120,7 +120,7 @@ If it fails on **kubectl**, check the SP has rights to the AKS cluster in `rg-bl
 |------|--------|------|
 | 1 | github.com/new | Create empty repo |
 | 2 | Terminal | `az ad sp create-for-rbac ... --sdk-auth` |
-| 3 | GitHub → Secrets | `AZURE_CREDENTIALS` = JSON |
+| 3 | GitHub → Secrets | **`AZURE_CREDENTIALS`** = full JSON (see Part C) |
 | 4 | Terminal | `git remote add` + `git push` |
 
 ---

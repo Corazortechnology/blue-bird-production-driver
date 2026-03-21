@@ -33,8 +33,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Option A — federated OIDC (no client secret): configure Entra app + federated credential for this repo
-      # Option B — service principal JSON in AZURE_CREDENTIALS (classic)
+      # Service principal + password MUST use `creds` JSON only.
+      # If you set client-id + tenant-id + subscription-id, azure/login treats that as OIDC and ignores creds — login fails.
+      # Secret AZURE_CREDENTIALS = one JSON: clientId, clientSecret, subscriptionId, tenantId (see docs/github-actions-aks.md).
       - name: Azure login
         uses: azure/login@v2
         with:
